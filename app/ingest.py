@@ -7,32 +7,25 @@ from .db import engine
 
 # ENV variables (set trên Render)
 ADMIN_API_JSON = os.environ.get("ADMIN_API_JSON", "")
-ADMIN_COOKIE = os.environ.get("ADMIN_COOKIE", "")
+ADMIN_AUTH = os.environ.get("ADMIN_AUTH", "")  # <-- Bearer token
 INGEST_KEY = os.environ.get("INGEST_KEY", "")
 
 
 def _parse_time(x) -> datetime:
-    """
-    Parse create_time (có thể là unix timestamp hoặc string datetime)
-    """
     if isinstance(x, (int, float)):
         return datetime.fromtimestamp(int(x))
     return parser.parse(str(x))
 
 
 def ingest_from_admin(from_ts: int, to_ts: int, vehicle_type: str = "Motorcycle"):
-    """
-    Gọi API admin và insert dữ liệu vào PostgreSQL
-    """
-
     if not ADMIN_API_JSON:
         raise RuntimeError("Missing ADMIN_API_JSON")
-    if not ADMIN_COOKIE:
-        raise RuntimeError("Missing ADMIN_COOKIE")
+    if not ADMIN_AUTH:
+        raise RuntimeError("Missing ADMIN_AUTH")
 
     headers = {
-        "Cookie": ADMIN_COOKIE,
-        "Accept": "application/json"
+        "Authorization": ADMIN_AUTH,          # <-- dùng Bearer token
+        "Accept": "application/json",
     }
 
     params = {
@@ -46,9 +39,7 @@ def ingest_from_admin(from_ts: int, to_ts: int, vehicle_type: str = "Motorcycle"
 
     payload = r.json()
 
-    # Tuỳ cấu trúc JSON thực tế (sửa nếu cần)
     items = payload.get("data") or payload.get("orders") or payload.get("items") or []
-
     if not isinstance(items, list):
         raise RuntimeError("Unexpected admin response format")
 
@@ -56,12 +47,11 @@ def ingest_from_admin(from_ts: int, to_ts: int, vehicle_type: str = "Motorcycle"
 
     with engine.begin() as conn:
         for it in items:
-
             order_id = it.get("id") or it.get("order_id") or it.get("Order ID")
             status = it.get("status") or it.get("Status")
             ct = it.get("create_time") or it.get("created_at") or it.get("Create Time")
             sap_contract_type = it.get("sap_contract_type") or it.get("Sap Contract Type")
-            sap_profile_id = it.get("sap_profile_id") or it.get("Sap Profile Id")
+            sap_profile_id = it.get("sap_profile_id") or it.get("sap_profile_id") or it.get("Sap Profile Id")
             pickup_city = it.get("pickup_city") or it.get("Pickup City")
 
             if not order_id or not ct:
@@ -94,7 +84,4 @@ def ingest_from_admin(from_ts: int, to_ts: int, vehicle_type: str = "Motorcycle"
 
             inserted_attempts += 1
 
-    return {
-        "fetched": len(items),
-        "inserted_attempts": inserted_attempts
-    }
+    return {"fetched": len(items), "inserted_attempts": inserted_attempts}
